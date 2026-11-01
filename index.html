@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Private</title>
+<style>
+html, body, #canvas { margin: 0; padding: 0; border: 0; }
+body { color: #eee; background: #111; overflow: hidden; touch-action: none; font: 16px sans-serif; }
+#canvas { display: block; }
+#canvas:focus { outline: none; }
+#gate { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; }
+#gate input, #gate button { font-size: 16px; padding: 8px 12px; max-width: 100%; }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<form id="gate">
+	<label for="password">請輸入密碼</label>
+	<input id="password" type="password" autocomplete="current-password" required>
+	<button type="submit">進入</button>
+	<div id="status" role="status"></div>
+</form>
+<script src="index.js"></script>
+<script>
+const ITERATIONS = 600000;
+const SALT_SIZE = 16;
+const IV_SIZE = 12;
+const gate = document.getElementById('gate');
+const statusLine = document.getElementById('status');
+const input = document.getElementById('password');
+
+// 邀請連結把密碼放在 # 後面，瀏覽器不會把這段送到伺服器。
+function setStatus(text, stage) {
+	statusLine.textContent = text;
+	document.title = stage;
+}
+
+async function unlock(password) {
+	const response = await fetch('game.enc');
+	if (!response.ok) {
+		throw new Error('下載失敗');
+	}
+	const data = await response.arrayBuffer();
+	const salt = data.slice(0, SALT_SIZE);
+	const iv = data.slice(SALT_SIZE, SALT_SIZE + IV_SIZE);
+	const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+	const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: salt, iterations: ITERATIONS }, base,
+		{ name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+	return crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, key, data.slice(SALT_SIZE + IV_SIZE));
+}
+
+async function enter(password) {
+	gate.querySelector('button').disabled = true;
+	setStatus('解密中……', 'decrypting');
+	let pack;
+	try {
+		pack = await unlock(password);
+	} catch (err) {
+		console.error(err);
+		setStatus('密碼不對，或資料下載失敗。', 'rejected');
+		gate.querySelector('button').disabled = false;
+		return;
+	}
+	setStatus('載入中……', 'loading');
+	const engine = new Engine({
+		args: ['--main-pack', 'index.pck'], canvasResizePolicy: 2, executable: 'index', experimentalVK: true, focusCanvas: true,
+		fileSizes: { 'index.wasm': 39514754 }, emscriptenPoolSize: 8, godotPoolSize: 4, gdextensionLibs: [],
+	});
+	await Promise.all([engine.init('index'), engine.preloadFile(pack, 'index.pck')]);
+	await engine.start();
+	gate.remove();
+	document.title = 'running';
+}
+
+gate.addEventListener('submit', (event) => {
+	event.preventDefault();
+	enter(input.value).catch((err) => {
+		console.error(err);
+		setStatus('啟動失敗：' + err.message, 'failed');
+	});
+});
+
+if (location.hash.length > 1) {
+	const invited = decodeURIComponent(location.hash.slice(1));
+	history.replaceState(null, '', location.pathname);
+	enter(invited).catch((err) => {
+		console.error(err);
+		setStatus('啟動失敗：' + err.message, 'failed');
+	});
+}
+</script>
+</body>
+</html>
