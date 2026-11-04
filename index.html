@@ -38,7 +38,8 @@ function setStatus(text, stage) {
 }
 
 async function unlock(password) {
-	const response = await fetch('game.enc');
+	// 每次都向伺服器確認版本，推新版後不會拿到瀏覽器快取的舊檔。
+	const response = await fetch('game.enc', { cache: 'no-cache' });
 	if (!response.ok) {
 		throw new Error('下載失敗');
 	}
